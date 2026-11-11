@@ -8,8 +8,62 @@ const params=new URLSearchParams(location.search), inviteCode=params.get('code')
 const safe=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function sound(kind){try{audio??=new (window.AudioContext||window.webkitAudioContext)();audio.resume();let osc=audio.createOscillator(),g=audio.createGain();osc.connect(g);g.connect(audio.destination);osc.frequency.value=kind==='right'?760:kind==='wrong'?240:540;g.gain.value=.08;osc.start();osc.stop(audio.currentTime+.14)}catch{}}
 function screen(id){for(const x of ['home','hostLogin','host','join','player'])show(x,x===id)}
-async function boot(){if(firebaseConfig.apiKey.includes('PASTE')){msg('尚未設定 Firebase，請先閱讀 README 教學。');return}try{app=initializeApp(firebaseConfig);auth=getAuth(app);db=getDatabase(app);onAuthStateChanged(auth,async u=>{user=u;host=!!u&&!u.isAnonymous;if(inviteCode){screen('join');$('joinCode').value=inviteCode;return}if(host){await loadQuiz();screen('host')}else if(!$('join').classList.contains('hidden')&&!$('player').classList.contains('hidden')){}else if(!$('join').classList.contains('hidden')){}else{screen('home')}msg('已連線')});}catch(e){msg('Firebase 設定錯誤：'+e.message)}}
-async function loadQuiz(){let s=await get(ref(db,'quizzes/'+user.uid));quiz=s.exists()?s.val():await (await fetch('./quizzes.json')).json().then(x=>x[0]);quiz.questions=Object.values(quiz.questions||{});$('quizName').value=quiz.name||'我的題庫';renderEditor()}
+async function boot() {
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getDatabase(app);
+
+    onAuthStateChanged(auth, async (u) => {
+      user = u;
+      host = !!u && !u.isAnonymous;
+
+      msg('已連線');
+
+      if (inviteCode) {
+        screen('join');
+        $('joinCode').value = inviteCode;
+        return;
+      }
+
+      if (host) {
+        screen('host');
+        await loadQuiz();
+      } else {
+        screen('home');
+      }
+    }, (error) => {
+      msg('登入狀態檢查失敗：' + error.message);
+    });
+
+  } catch (error) {
+    console.error(error);
+    msg('Firebase 連線失敗：' + error.message);
+  }
+}                   
+async function loadQuiz(){ 
+  try {
+    const snapshot = await get(ref(db, 'quizzes/' + user.uid));
+
+    if (snapshot.exists()) {
+      quiz = snapshot.val();
+    } else {
+      const response = await fetch('./quizzes.json');
+      const data = await response.json();
+      quiz = data[0];
+    }
+
+    quiz.questions = Object.values(quiz.questions || []);
+
+    $('quizName').value = quiz.name || '我的題庫';
+
+    renderEditor();
+
+  } catch (error) {
+    console.error('讀取題庫失敗：', error);
+    alert('讀取題庫失敗：' + error.message);
+  }
+}
 function renderEditor(){$('questionList').innerHTML=quiz.questions.map((q,i)=>`<div class="question-editor"><b>第 ${i+1} 題</b><label>題目<input data-i="${i}" data-k="prompt" value="${safe(q.prompt)}"></label>${(q.options||['','','','']).map((v,j)=>`<label>選項 ${'ABCD'[j]}<input data-i="${i}" data-opt="${j}" value="${safe(v)}"></label>`).join('')}<label>正確答案<select data-i="${i}" data-k="correctIndex">${[0,1,2,3].map(j=>`<option value="${j}" ${Number(q.correctIndex)===j?'selected':''}>${'ABCD'[j]}</option>`).join('')}</select></label><label>時間（秒）<input type="number" min="5" max="120" data-i="${i}" data-k="timeLimit" value="${q.timeLimit||15}"></label><button data-delete="${i}">刪除此題</button></div>`).join('');$('questionList').querySelectorAll('input,select').forEach(el=>el.addEventListener('change',()=>{let q=quiz.questions[+el.dataset.i];if(el.dataset.opt!==undefined)q.options[+el.dataset.opt]=el.value;else q[el.dataset.k]=['correctIndex','timeLimit'].includes(el.dataset.k)?+el.value:el.value}));$('questionList').querySelectorAll('[data-delete]').forEach(el=>el.onclick=()=>{quiz.questions.splice(+el.dataset.delete,1);renderEditor()})}
 function listenRoom(code){room=code;onValue(ref(db,'rooms/'+code),snap=>{if(!snap.exists()){msg('房間不存在或已結束');return}roomData=snap.val();if(host)renderHost();else renderPlayer()})}
 async function createRoom(){if(!quiz.questions.length){alert('請先新增題目');return}let code;for(let i=0;i<15;i++){code=String(Math.floor(100000+Math.random()*900000));if(!(await get(ref(db,'rooms/'+code))).exists())break}await set(ref(db,'rooms/'+code),{hostUid:user.uid,quiz:quiz.questions.map(q=>({prompt:q.prompt,options:q.options,timeLimit:q.timeLimit||15,})),phase:'waiting',index:-1,createdAt:Date.now(),players:{},answers:{}});show('hostRoom');listenRoom(code)}
