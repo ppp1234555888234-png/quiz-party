@@ -1,0 +1,21 @@
+快問快答 4.0 — GitHub Pages 上傳包
+
+已填入你提供的 Firebase 網頁設定，並修正玩家加入前匿名登入、公布答案時同步正確答案的問題。
+
+手機操作：
+1. 解壓縮這份 ZIP（不要直接把 ZIP 上傳 GitHub）。
+2. 到 GitHub 的 quiz-party 儲存庫 → Add file → Upload files。
+3. 選取解壓後的 index.html、app.js、firebase-config.js、quizzes.json（可一起選），按 Commit changes。
+4. Settings → Pages → Build and deployment → Deploy from a branch → main / (root) → Save。
+5. 等 GitHub Pages 顯示網站網址，再用 Safari 開啟。
+
+Firebase 必做：
+- Authentication → Sign-in method → 開啟 Email/Password 與 Anonymous。
+- Authentication → Settings → Authorized domains → 加入 ppp1234555888234-png.github.io（如使用此帳號）。
+- Realtime Database → Rules → 貼上 database.rules.json 內容並 Publish。
+- 確認 Realtime Database URL 與 firebase-config.js 相符。
+
+注意：
+- quizzes.json 含有題目與正確答案；公開 GitHub 儲存庫可被任何人讀取。正式玩之前若不想讓玩家提前看到答案，需另外改成只透過主持人權限保存題庫。
+- Firebase 網頁 apiKey 通常不是秘密，但請勿上傳服務帳戶 JSON、管理員私鑰或密碼。
+- 目前只做靜態檢查與明顯程式錯誤修正，尚未連上你的 Firebase 實測。
