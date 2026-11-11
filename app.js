@@ -64,7 +64,67 @@ async function loadQuiz(){
     alert('讀取題庫失敗：' + error.message);
   }
 }
-function renderEditor(){$('questionList').innerHTML=quiz.questions.map((q,i)=>`<div class="question-editor"><b>第 ${i+1} 題</b><label>題目<input data-i="${i}" data-k="prompt" value="${safe(q.prompt)}"></label>${(q.options||['','','','']).map((v,j)=>`<label>選項 ${'ABCD'[j]}<input data-i="${i}" data-opt="${j}" value="${safe(v)}"></label>`).join('')}<label>正確答案<select data-i="${i}" data-k="correctIndex">${[0,1,2,3].map(j=>`<option value="${j}" ${Number(q.correctIndex)===j?'selected':''}>${'ABCD'[j]}</option>`).join('')}</select></label><label>時間（秒）<input type="number" min="5" max="120" data-i="${i}" data-k="timeLimit" value="${q.timeLimit||15}"></label><button data-delete="${i}">刪除此題</button></div>`).join('');$('questionList').querySelectorAll('input,select').forEach(el=>el.addEventListener('change',()=>{let q=quiz.questions[+el.dataset.i];if(el.dataset.opt!==undefined)q.options[+el.dataset.opt]=el.value;else q[el.dataset.k]=['correctIndex','timeLimit'].includes(el.dataset.k)?+el.value:el.value}));$('questionList').querySelectorAll('[data-delete]').forEach(el=>el.onclick=()=>{quiz.questions.splice(+el.dataset.delete,1);renderEditor()})}
+function renderEditor() {
+  $('questionList').innerHTML = quiz.questions.map((q, i) => `
+    <div class="question-editor">
+      <b>第 ${i + 1} 題</b>
+
+      <label>題目
+        <input data-i="${i}" data-k="prompt" value="${safe(q.prompt)}">
+      </label>
+
+      ${(q.options || ['', '', '', '']).map((v, j) => `
+        <label>選項 ${'ABCD'[j]}
+          <input data-i="${i}" data-opt="${j}" value="${safe(v)}">
+        </label>
+      `).join('')}
+
+      <label>正確答案
+        <select data-i="${i}" data-k="correctIndex">
+          ${[0, 1, 2, 3].map(j => `
+            <option value="${j}" ${Number(q.correctIndex) === j ? 'selected' : ''}>
+              ${'ABCD'[j]}
+            </option>
+          `).join('')}
+        </select>
+      </label>
+
+      <label>答案解析
+        <textarea data-i="${i}" data-k="explanation">${safe(q.explanation || '')}</textarea>
+      </label>
+
+      <label>時間（秒）
+        <input type="number" min="5" max="120"
+          data-i="${i}" data-k="timeLimit"
+          value="${q.timeLimit || 15}">
+      </label>
+
+      <button data-delete="${i}">刪除此題</button>
+    </div>
+  `).join('');
+
+  $('questionList').querySelectorAll('input,select,textarea').forEach(el => {
+    el.addEventListener('change', () => {
+      let q = quiz.questions[+el.dataset.i];
+
+      if (el.dataset.opt !== undefined) {
+        q.options[+el.dataset.opt] = el.value;
+      } else {
+        q[el.dataset.k] =
+          ['correctIndex', 'timeLimit'].includes(el.dataset.k)
+            ? +el.value
+            : el.value;
+      }
+    });
+  });
+
+  $('questionList').querySelectorAll('[data-delete]').forEach(el => {
+    el.onclick = () => {
+      quiz.questions.splice(+el.dataset.delete, 1);
+      renderEditor();
+    };
+  });
+}
 function listenRoom(code){room=code;onValue(ref(db,'rooms/'+code),snap=>{if(!snap.exists()){msg('房間不存在或已結束');return}roomData=snap.val();if(host)renderHost();else renderPlayer()})}
 async function createRoom(){if(!quiz.questions.length){alert('請先新增題目');return}let code;for(let i=0;i<15;i++){code=String(Math.floor(100000+Math.random()*900000));if(!(await get(ref(db,'rooms/'+code))).exists())break}await set(ref(db,'rooms/'+code),{hostUid:user.uid,quiz:quiz.questions.map(q=>({prompt:q.prompt,options:q.options,timeLimit:q.timeLimit||15,})),phase:'waiting',index:-1,createdAt:Date.now(),players:{},answers:{}});show('hostRoom');listenRoom(code)}
 function renderHost(){if(!roomData)return;$('roomCode').textContent=room;$('invite').value=new URL('?code='+room,location.href).href;$('qr').innerHTML='';if(window.QRCode)window.QRCode.toCanvas($('qr').appendChild(document.createElement('canvas')),$('invite').value,{width:220,margin:2});else $('qr').textContent='QR Code 載入失敗，請檢查網路';let players=Object.entries(roomData.players||{});$('playerList').textContent='已加入玩家：'+(players.map(([,p])=>p.name).join('、')||'尚無');let q=roomData.quiz?.[roomData.index];$('hostGame').innerHTML=q?`<h3>第 ${roomData.index+1}/${roomData.quiz.length} 題：${safe(q.prompt)}</h3><p>${q.options.map((o,i)=>`${'ABCD'[i]}. ${safe(o)}`).join('<br>')}</p><p>${roomData.phase==='asking'?'倒數中':roomData.phase==='revealed'?'正確答案：'+ 'ABCD'[quiz.questions[roomData.index].correctIndex]:'遊戲結束'}</p><h3>排行榜</h3>${players.sort((a,b)=>(b[1].score||0)-(a[1].score||0)).map(([,p],i)=>`${i+1}. ${safe(p.name)} — ${p.score||0} 分`).join('<br>')}`:'';show('start',roomData.phase==='waiting');show('reveal',roomData.phase==='asking');show('next',roomData.phase==='revealed'&&roomData.index+1<roomData.quiz.length);show('end',roomData.phase==='asking'||roomData.phase==='revealed');if(roomData.phase==='asking'&&lastIndex!==roomData.index){lastIndex=roomData.index;clearInterval(timer);timer=setInterval(()=>{if(roomData?.phase==='asking'&&Date.now()>=roomData.endsAt){clearInterval(timer);reveal()}},400)} }
