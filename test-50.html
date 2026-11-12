@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>快問快答｜50人壓力測試</title>
+
+<style>
+body{
+  font-family:system-ui,sans-serif;
+  background:#edf6fc;
+  color:#243b53;
+  padding:20px;
+  max-width:750px;
+  margin:auto;
+}
+.card{
+  background:white;
+  padding:22px;
+  border-radius:18px;
+  margin:16px 0;
+}
+button,input{
+  font:inherit;
+  padding:12px;
+  border-radius:10px;
+  margin:6px 0;
+}
+input{
+  width:100%;
+  box-sizing:border-box;
+  border:1px solid #ccc;
+}
+button{
+  border:0;
+  background:#568fb8;
+  color:white;
+  cursor:pointer;
+}
+button:disabled{
+  opacity:.5;
+}
+.player{
+  padding:7px;
+  border-bottom:1px solid #eee;
+}
+.success{color:#16834a}
+.fail{color:#c0392b}
+</style>
+</head>
+
+<body>
+
+<h1>🎮 快問快答 50 人測試器</h1>
+
+<div class="card">
+  <h2>① 輸入測試房號</h2>
+
+  <input
+    id="roomCode"
+    maxlength="6"
+    placeholder="請輸入主持人建立的6位數房號"
+  >
+
+  <p>測試人數：50 人</p>
+
+  <button id="joinBtn">
+    👥 模擬 50 人加入
+  </button>
+
+  <button id="answerBtn" disabled>
+    ✏️ 模擬 50 人作答
+  </button>
+
+  <p id="status">等待開始測試</p>
+</div>
+
+<div class="card">
+  <h2>📊 測試結果</h2>
+
+  <p id="joined">成功加入：0 / 50</p>
+  <p id="answered">成功作答：0 / 50</p>
+  <p id="failed">失敗：0</p>
+  <p id="elapsed">耗時：尚未測試</p>
+</div>
+
+<div class="card">
+  <h2>👥 模擬玩家清單</h2>
+  <div id="players"></div>
+</div>
+
+<script type="module">
+
+import {
+  initializeApp,
+  deleteApp
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+
+import {
+  getAuth,
+  signInAnonymously,
+  signOut
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+
+import {
+  getDatabase,
+  ref,
+  get,
+  set,
+  runTransaction
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
+
+import {firebaseConfig} from "./firebase-config.js";
+
+const $=id=>document.getElementById(id);
+
+const TOTAL=50;
+
+let clients=[];
+let roomCode="";
+let joining=false;
+let answering=false;
+
+const sleep=ms=>
+  new Promise(resolve=>setTimeout(resolve,ms));
+
+function status(text){
+  $("status").textContent=text;
+}
+
+function log(text,ok=true){
+  const div=document.createElement("div");
+
+  div.className="player "+(ok?"success":"fail");
+  div.textContent=text;
+
+  $("players").appendChild(div);
+}
+
+function updateCount(id,n){
+  $(id).textContent=
+    (id==="joined"?"成功加入：":"成功作答：")+
+    n+" / "+TOTAL;
+}
+
+async function createClient(number){
+
+  const app=initializeApp(
+    firebaseConfig,
+    "test-player-"+Date.now()+"-"+number
+  );
+
+  const auth=getAuth(app);
+  const db=getDatabase(app);
+
+  try{
+
+    const credential=await signInAnonymously(auth);
+
+    const uid=credential.user.uid;
+
+    const name=
+      "測試玩家"+String(number).padStart(2,"0");
+
+    const roomRef=ref(
+      db,
+      `rooms/${roomCode}/players/${uid}`
+    );
+
+    await set(roomRef,{
+      name,
+      score:0
+    });
+
+    return {
+      app,
+      auth,
+      db,
+      uid,
+      name
+    };
+
+  }catch(e){
+
+    try{
+      await signOut(auth);
+    }catch{}
+
+    await deleteApp(app);
+
+    throw e;
+  }
+}
+
+async function join50(){
+
+  if(joining)return;
+
+  roomCode=$("roomCode").value.trim();
+
+  if(!/^\d{6}$/.test(roomCode)){
+    alert("請輸入6位數房號");
+    return;
+  }
+
+  if(clients.length){
+    alert("這個測試頁面已建立玩家，請勿重複加入。");
+    return;
+  }
+
+  joining=true;
+
+  $("joinBtn").disabled=true;
+  $("players").innerHTML="";
+
+  const started=performance.now();
+
+  let success=0;
+  let failed=0;
+
+  try{
+
+    const checkApp=initializeApp(
+      firebaseConfig,
+      "room-check-"+Date.now()
+    );
+
+    const checkAuth=getAuth(checkApp);
+    const checkDb=getDatabase(checkApp);
+
+    try{
+
+      await signInAnonymously(checkAuth);
+
+      const snap=await get(
+        ref(checkDb,"rooms/"+roomCode)
+      );
+
+      if(!snap.exists()){
+        throw Error("找不到房間");
+      }
+
+      if(snap.val().phase!=="waiting"){
+        throw Error("房間不是等待加入狀態");
+      }
+
+    }finally{
+
+      try{
+        await signOut(checkAuth);
+      }catch{}
+
+      await deleteApp(checkApp);
+    }
+
+    status("正在建立50位模擬玩家…");
+
+    // 分批建立，降低瞬間請求量
+    for(let start=1;start<=TOTAL;start+=5){
+
+      const numbers=Array.from(
+        {length:Math.min(5,TOTAL-start+1)},
+        (_,i)=>start+i
+      );
+
+      const results=await Promise.allSettled(
+        numbers.map(n=>createClient(n))
+      );
+
+      results.forEach((result,i)=>{
+
+        const n=numbers[i];
+
+        if(result.status==="fulfilled"){
+
+          clients.push(result.value);
+          success++;
+
+          log("✅ 測試玩家"+n+" 加入成功");
+
+        }else{
+
+          failed++;
+
+          log(
+            "❌ 測試玩家"+n+"："+
+            result.reason.message,
+            false
+          );
+        }
+      });
+
+      updateCount("joined",success);
+      $("failed").textContent="失敗："+failed;
+
+      status(`已處理 ${Math.min(start+4,TOTAL)} / 50 人`);
+
+      await sleep(400);
+    }
+
+    const seconds=(
+      (performance.now()-started)/1000
+    ).toFixed(2);
+
+    $("elapsed").textContent=
+      "加入測試耗時："+seconds+" 秒";
+
+    status(
+      `加入測試完成：成功${success}人，失敗${failed}人`
+    );
+
+    $("answerBtn").disabled=success===0;
+
+  }catch(e){
+
+    status("測試失敗："+e.message);
+
+    alert(e.message);
+
+  }finally{
+
+    joining=false;
+  }
+}
+
+async function answer50(){
+
+  if(answering)return;
+
+  if(!clients.length){
+    alert("請先模擬玩家加入");
+    return;
+  }
+
+  answering=true;
+  $("answerBtn").disabled=true;
+
+  let success=0;
+  let failed=0;
+
+  const started=performance.now();
+
+  try{
+
+    const first=clients[0];
+
+    const snap=await get(
+      ref(first.db,"rooms/"+roomCode)
+    );
+
+    if(!snap.exists()){
+      throw Error("房間不存在");
+    }
+
+    const room=snap.val();
+
+    if(room.phase!=="asking"){
+      throw Error("請主持人先按開始遊戲");
+    }
+
+    const questionIndex=room.index;
+
+    status("正在模擬玩家作答…");
+
+    // 50人於短時間內送出答案
+    const results=await Promise.allSettled(
+      clients.map(async(client,i)=>{
+
+        await sleep(Math.floor(Math.random()*800));
+
+        const current=await get(
+          ref(client.db,"rooms/"+roomCode)
+        );
+
+        if(!current.exists()){
+          throw Error("房間不存在");
+        }
+
+        const data=current.val();
+
+        if(
+          data.phase!=="asking" ||
+          data.index!==questionIndex ||
+          Date.now()>=data.endsAt
+        ){
+          throw Error("作答時間已結束");
+        }
+
+        const choice=Math.floor(Math.random()*4);
+
+        const answerRef=ref(
+          client.db,
+          `rooms/${roomCode}/answers/${client.uid}`
+        );
+
+        const result=await runTransaction(
+          answerRef,
+          previous=>
+            previous===null
+              ?{choice,at:Date.now()}
+              :undefined
+        );
+
+        if(!result.committed){
+          throw Error("答案已存在，未重複提交");
+        }
+
+        return client.name;
+      })
+    );
+
+    results.forEach((r,i)=>{
+
+      if(r.status==="fulfilled"){
+
+        success++;
+        log("🟢 "+r.value+" 作答成功");
+
+      }else{
+
+        failed++;
+        log(
+          "🔴 "+clients[i].name+
+          "："+r.reason.message,
+          false
+        );
+      }
+    });
+
+    updateCount("answered",success);
+
+    $("failed").textContent=
+      "本次作答失敗："+failed;
+
+    const seconds=(
+      (performance.now()-started)/1000
+    ).toFixed(2);
+
+    $("elapsed").textContent=
+      "作答測試耗時："+seconds+" 秒";
+
+    status(
+      `作答完成：成功${success}人，失敗${failed}人`
+    );
+
+  }catch(e){
+
+    status("作答測試失敗："+e.message);
+
+  }finally{
+
+    answering=false;
+
+    // 可以在下一題繼續測試
+    $("answerBtn").disabled=false;
+  }
+}
+
+$("joinBtn").onclick=join50;
+$("answerBtn").onclick=answer50;
+
+</script>
+
+</body>
+</html>
